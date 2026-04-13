@@ -29,6 +29,10 @@
         exit(EXIT_FAILURE);                             \
     } while (0)
 
+
+typedef struct shared{
+    pthread_barrier_t barrier;
+} shared_t;
 void usage(char* program_name)
 {
     fprintf(stderr, "Usage: \n");
@@ -61,8 +65,9 @@ void print_keyboards_state(double* keyboards, int m, int k)
     }
 }
 
-void child_work(int m)
+void child_work(int m, shared_t *shared)
 {
+    pthread_barrier_wait(&shared->barrier);
     char sem_name[20];
     sem_t *sem_arr[MAX_KEYBOARDS];
     srand(time(NULL)^getpid());
@@ -92,7 +97,7 @@ void clean_sems(int m)
         sem_unlink(sem_name);
     }
 }
-void create_n_processes(int n, int m)
+void create_n_processes(int n, int m, shared_t* shared)
 {
     for(int i=0; i<n; i++)
     {
@@ -104,7 +109,7 @@ void create_n_processes(int n, int m)
         if(pid==0)
         {
 
-            child_work(m);
+            child_work(m, shared);
             exit(EXIT_SUCCESS);
         }
     }
@@ -120,8 +125,19 @@ int main(int argc, char** argv) {
         usage(argv[0]);
     }
     clean_sems(m);
-    create_n_processes(n,m);
-
+    shared_t* shared = mmap(NULL, sizeof(shared_t), PROT_READ|PROT_WRITE, MAP_SHARED|MAP_ANON,-1,0);
+    if(shared==MAP_FAILED)
+    {
+        ERR("mmap");
+    }
+    pthread_barrierattr_t barrier_attr;
+    pthread_barrierattr_init(&barrier_attr);
+    pthread_barrierattr_setpshared(&barrier_attr, PTHREAD_PROCESS_SHARED);
+    pthread_barrier_init(&shared->barrier, &barrier_attr, n+1);
+    pthread_barrierattr_destroy(&barrier_attr);
+    create_n_processes(n,m, shared);
+    ms_sleep(500);
+    pthread_barrier_wait(&shared->barrier);
     while(wait(NULL)>0){}
     clean_sems(m);
     printf("Cleaning Finished\n");
