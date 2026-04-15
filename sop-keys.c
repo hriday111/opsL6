@@ -80,10 +80,10 @@ void child_work(int m, int k, shared_t *shared)
     }
 
     int fd = shm_open(SHARED_MEM_NAME,  O_CREAT | O_RDWR, 0666);
-    if(fd=-1){ERR("shm_open");}
+    if(fd==-1){ERR("shm_open");}
 
     double* shared_mem = mmap(NULL, m*k*sizeof(double), PROT_READ|PROT_WRITE, MAP_SHARED, fd, 0);
-    if(shared_mem=MAP_FAILED) {ERR("mmap");}
+    if(shared_mem==MAP_FAILED) {ERR("mmap");}
 
     for(int i=0; i<10; i++)
     {
@@ -172,7 +172,7 @@ int main(int argc, char** argv) {
     create_n_processes(n,m,k, shared);
 
     int fd = shm_open(SHARED_MEM_NAME,  O_CREAT | O_RDWR, 0666);
-    if(fd=-1){ERR("shm_open");}
+    if(fd==-1){ERR("shm_open");}
 
     if(ftruncate(fd, m*k*sizeof(double))==-1)
     {
@@ -180,7 +180,7 @@ int main(int argc, char** argv) {
     }
 
     double* shared_mem = mmap(NULL, m*k*sizeof(double), PROT_READ|PROT_WRITE, MAP_SHARED, fd, 0);
-    if(shared_mem=MAP_FAILED) {ERR("mmap");}
+    if(shared_mem==MAP_FAILED) {ERR("mmap");}
 
     for(int i=0; i<k*m;i++)
     {
