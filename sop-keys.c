@@ -32,6 +32,7 @@
 
 typedef struct shared{
     pthread_barrier_t barrier;
+    pthread_mutex_t keyboards[];
 } shared_t;
 void usage(char* program_name)
 {
@@ -65,7 +66,7 @@ void print_keyboards_state(double* keyboards, int m, int k)
     }
 }
 
-void child_work(int m, shared_t *shared)
+void child_work(int m, int k, shared_t *shared)
 {
     pthread_barrier_wait(&shared->barrier);
     char sem_name[20];
@@ -77,14 +78,37 @@ void child_work(int m, shared_t *shared)
         sem_arr[i] = sem_open(sem_name, O_CREAT, 0666, KEYBOARD_CAP);
         if(sem_arr[i]==SEM_FAILED) {ERR("sem_open");}
     }
+
+    int fd = shm_open(SHARED_MEM_NAME,  O_CREAT | O_RDWR, 0666);
+    if(fd=-1){ERR("shm_open");}
+
+    double* shared_mem = mmap(NULL, m*k*sizeof(double), PROT_READ|PROT_WRITE, MAP_SHARED, fd, 0);
+    if(shared_mem=MAP_FAILED) {ERR("mmap");}
+
     for(int i=0; i<10; i++)
     {
         int rand_sem=rand()%m;
-        sem_wait(sem_arr[rand_sem]);
+        int rand_val = rand()%(m*k);
+        sem_wait(sem_arr[rand_val%m]);
         printf("Student %d: cleaning keyboard %d\n", getpid(), rand_sem);
         ms_sleep(300);
-        sem_post(sem_arr[rand_sem]);
+        pthread_mutex_lock(&shared->keyboards[rand_sem]);
+        shared_mem[rand_sem]/=3;
+
+        pthread_mutex_lock(&shared->keyboards[rand_sem]);
+        sem_post(sem_arr[rand_sem%m]);
     }
+
+    for(int i = 0; i < m; i++){
+        if(sem_close(sem_arr[i]) == -1){
+            ERR("sem_close");
+        }
+    }
+    
+    munmap(shared, sizeof(shared_t));
+
+    munmap(shared_mem, m*k*sizeof(double));
+    close(fd);
 }
 
 
@@ -97,7 +121,7 @@ void clean_sems(int m)
         sem_unlink(sem_name);
     }
 }
-void create_n_processes(int n, int m, shared_t* shared)
+void create_n_processes(int n, int m, int k, shared_t* shared)
 {
     for(int i=0; i<n; i++)
     {
@@ -109,7 +133,7 @@ void create_n_processes(int n, int m, shared_t* shared)
         if(pid==0)
         {
 
-            child_work(m, shared);
+            child_work(m,k, shared);
             exit(EXIT_SUCCESS);
         }
     }
@@ -135,11 +159,42 @@ int main(int argc, char** argv) {
     pthread_barrierattr_setpshared(&barrier_attr, PTHREAD_PROCESS_SHARED);
     pthread_barrier_init(&shared->barrier, &barrier_attr, n+1);
     pthread_barrierattr_destroy(&barrier_attr);
-    create_n_processes(n,m, shared);
+
+    pthread_mutexattr_t mutex_attr;
+    pthread_mutexattr_init(&mutex_attr);
+    pthread_mutexattr_setpshared(&mutex_attr, PTHREAD_PROCESS_SHARED);
+    for(int i=0; i<m*k; i++)
+    {
+        pthread_mutex_init(&shared->keyboards[i], &mutex_attr);
+    }
+    pthread_mutexattr_destroy(&mutex_attr);
+    
+    create_n_processes(n,m,k, shared);
+
+    int fd = shm_open(SHARED_MEM_NAME,  O_CREAT | O_RDWR, 0666);
+    if(fd=-1){ERR("shm_open");}
+
+    if(ftruncate(fd, m*k*sizeof(double))==-1)
+    {
+        ERR("truncate");
+    }
+
+    double* shared_mem = mmap(NULL, m*k*sizeof(double), PROT_READ|PROT_WRITE, MAP_SHARED, fd, 0);
+    if(shared_mem=MAP_FAILED) {ERR("mmap");}
+
+    for(int i=0; i<k*m;i++)
+    {
+        shared_mem[i]=1.0;
+    }
+
     ms_sleep(500);
     pthread_barrier_wait(&shared->barrier);
     while(wait(NULL)>0){}
     clean_sems(m);
+    close(fd);
+    pthread_barrier_destroy(&shared->barrier);
+    munmap(shared, sizeof(shared_t));
+    munmap(shared_mem, m*k*sizeof(double));
     printf("Cleaning Finished\n");
     return EXIT_SUCCESS;
 }
