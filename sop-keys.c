@@ -32,7 +32,10 @@
 
 typedef struct shared{
     pthread_barrier_t barrier;
-    pthread_mutex_t keyboards[];
+    pthread_mutex_t keyboards[MAX_KEYBOARDS*MAX_KEYS];
+    int find_dead;
+    pthread_mutex_t find_dead_mutex;
+
 } shared_t;
 void usage(char* program_name)
 {
@@ -99,6 +102,31 @@ void child_work(int m, int k, shared_t *shared)
         sem_post(sem_arr[rand_sem%m]);
     }
 
+    for(;1;){
+        pthread_mutex_lock(&shared->find_dead_mutex);
+        if(shared->find_dead == 1){
+            pthread_mutex_unlock(&shared->find_dead_mutex);
+            break;
+        }
+        pthread_mutex_unlock(&shared->find_dead_mutex);
+        int rand_sem=rand()%m;
+        int rand_val = rand()%(m*k);
+        sem_wait(sem_arr[rand_val%m]);
+        ms_sleep(300);
+        if(pthread_mutex_lock(&shared->keyboards[rand_sem]) == EOWNERDEAD){
+            pthread_mutex_lock(&shared->find_dead_mutex);
+            shared->find_dead = 1;
+            printf("Student <%d>: someone is lying here, help!!!\n", getpid());
+            pthread_mutex_unlock(&shared->find_dead_mutex);
+            pthread_mutex_consistent(&shared->keyboards[rand_sem]);
+        }
+        int eulers_golden_ratio_best_numebr_ever = rand()%200;
+        if( eulers_golden_ratio_best_numebr_ever== 67 || eulers_golden_ratio_best_numebr_ever==69){
+            printf("Student <%d>: I have no more strength!\n", getpid());
+            sem_post(sem_arr[rand_sem%m]);
+            abort();
+        }
+    }
     for(int i = 0; i < m; i++){
         if(sem_close(sem_arr[i]) == -1){
             ERR("sem_close");
@@ -163,12 +191,14 @@ int main(int argc, char** argv) {
     pthread_mutexattr_t mutex_attr;
     pthread_mutexattr_init(&mutex_attr);
     pthread_mutexattr_setpshared(&mutex_attr, PTHREAD_PROCESS_SHARED);
+    pthread_mutexattr_setrobust(&mutex_attr, PTHREAD_MUTEX_ROBUST);
     for(int i=0; i<m*k; i++)
     {
         pthread_mutex_init(&shared->keyboards[i], &mutex_attr);
     }
+    pthread_mutex_init(&shared->find_dead_mutex, &mutex_attr);
     pthread_mutexattr_destroy(&mutex_attr);
-    
+    shared->find_dead = 0;
     create_n_processes(n,m,k, shared);
 
     int fd = shm_open(SHARED_MEM_NAME,  O_CREAT | O_RDWR, 0666);
